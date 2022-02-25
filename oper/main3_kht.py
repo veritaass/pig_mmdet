@@ -69,11 +69,11 @@ class AnnoEventHandler(FileSystemEventHandler):
             return
         if pathlib.Path(event.dest_path).suffix in image_suffix:
             self.logger.info("image file detected : moved %s: %s", what, event.dest_path)
-            process_inference(event.dest_path, True)
+            process_inference(event.dest_path, False)
             return
         if pathlib.Path(event.dest_path).suffix in video_suffix:
             self.logger.info("video file detected : moved %s: %s", what, event.dest_path)
-            process_inference(event.dest_path, False)
+            process_inference(event.dest_path, True)
             # process_video(event.dest_path)
             return
         if event.dest_path == event.src_path:
