@@ -233,7 +233,8 @@ def append_keyp_annotation(coco_obj, image_id, pose_results):
 
 def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
     ### temp
-    inf_type = ['BBOX', 'KEYP']
+    inf_type = ['BBOX']
+    # inf_type = ['BBOX', 'KEYP']
     ### temp
     # if not inf_type :
     #     return
@@ -529,24 +530,24 @@ def main():
         'recv_dir', help='Specify directory to monitor')
 
     parser.add_argument('--det-config',
-                        default='../mmdetection/configs/mask_rcnn/mask_rcnn_r101_fpn_mstrain-poly_3x_coco.py',
+                        default='../configs/mask_rcnn/mask_rcnn_r101_fpn_mstrain-poly_3x_coco.py',
                         help='Config file for detection')
     parser.add_argument('--det-checkpoint',
                         default='https://download.openmmlab.com/mmdetection/v2.0/mask_rcnn/mask_rcnn_r101_fpn_mstrain-poly_3x_coco/mask_rcnn_r101_fpn_mstrain-poly_3x_coco_20210524_200244-5675c317.pth',
                         help='Checkpoint file for detection')
 
     parser.add_argument('--pose_config',
-                        default='../mmpose/configs/animal/2d_kpt_sview_rgb_img/topdown_heatmap/animalpose/hrnet_w48_animalpose_256x256.py',
+                        default='../../mmpose/configs/animal/2d_kpt_sview_rgb_img/topdown_heatmap/animalpose/hrnet_w48_animalpose_256x256.py',
                         help='Config file for pose')
     parser.add_argument('--pose_checkpoint',
                         default='https://download.openmmlab.com/mmpose/animal/hrnet/hrnet_w48_animalpose_256x256-34644726_20210426.pth',
                         help='Checkpoint file for pose')
 
-    parser.add_argument('--seg_config', default='../mmsegmentation/configs/pspnet/pspnet_r101-d8_512x512_40k_voc12aug.py',
-                        help='Config file for segmentation')
-    parser.add_argument('--seg_checkpoint',
-                        default='../mmsegmentation/checkpoints/pspnet_r101-d8_512x512_40k_voc12aug_20200613_161222-bc933b18.pth',
-                        help='Checkpoint file for segmentation')
+    # parser.add_argument('--seg_config', default='../mmsegmentation/configs/pspnet/pspnet_r101-d8_512x512_40k_voc12aug.py',
+    #                     help='Config file for segmentation')
+    # parser.add_argument('--seg_checkpoint',
+    #                     default='../mmsegmentation/checkpoints/pspnet_r101-d8_512x512_40k_voc12aug_20200613_161222-bc933b18.pth',
+    #                     help='Checkpoint file for segmentation')
 
     args = parser.parse_args()
 
@@ -561,9 +562,9 @@ def main():
     logger.info("PoseModel initlizing ...")
     pose_model = init_pose_model(
         args.pose_config, args.pose_checkpoint, device='cuda:6')
-    logger.info("Segmentation initlizing ...")
-    seg_model = init_segmentor(
-        args.seg_config, args.seg_checkpoint, device='cuda:7')
+    # logger.info("Segmentation initlizing ...")
+    # seg_model = init_segmentor(
+    #     args.seg_config, args.seg_checkpoint, device='cuda:7')
     event_handler = AnnoEventHandler()
     observer = Observer()
     observer.schedule(event_handler, path, recursive=True)
