@@ -311,7 +311,7 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
                 # BBOX
                 mmdet_results = inference_detector(det_model, frame)
                 det_results = process_mmdet_results(
-                    mmdet_results, 20)  # 20 for cow
+                    mmdet_results, 1)  # 20 for cow
 
                 # logger.info(f'length of detection results : {len(det_results)}, {det_results}')
                 if inf_type == BBOX:
@@ -343,7 +343,7 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
     else:        # is_video==False -> image
         img = mmcv.imread(fpath)    
         mmdet_results = inference_detector(det_model, fpath)
-        det_results = process_mmdet_results(mmdet_results, 20)  # 20 for cow
+        det_results = process_mmdet_results(mmdet_results, 1)  # 20 for cow
         img_id = len(coco_obj['images'])+1
         ann_image = create_image(seq=img_id, width=img.shape[1], height=img.shape[0], file_name=fname)
         coco_obj['images'].append(ann_image)
@@ -423,7 +423,7 @@ def process_video(fpath):
             # BBOX
             mmdet_results = inference_detector(det_model, frame)
             det_results = process_mmdet_results(
-                mmdet_results, 20)  # 20 for cow
+                mmdet_results, 1)  # 20 for cow
 
             # logger.info(f'length of detection results : {len(det_results)}, {det_results}')
             if inf_type == BBOX:
