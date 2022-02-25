@@ -30,8 +30,8 @@ import shutil
 3. 
 """
 # target suffix
-image_suffix = ['jpg','jpeg','png']
-video_suffix = ['mp4','avi','wmv']
+image_suffix = ['.jpg','.jpeg','.png']
+video_suffix = ['.mp4','.avi','.wmv']
 
 # model
 det_model = None
