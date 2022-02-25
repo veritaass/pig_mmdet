@@ -255,11 +255,10 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
     ### {imagePath}/BBOX_KEPY/20220224/14/20/annotations/coco-annotation.json 
     ### {imagePath}/BBOX_KEPY/20220224/14/20/images/img00001.jpg 
     #######################################
-    folder_path = paths
-    folder_path[-1]="_".join(inf_type) # 이미지 폴더 하위에 annotation 저장  ex) BBOX_KEYP
-    
-    ### old
-    # folder_path = paths[:-1]  # 파일 이름 제외
+    # folder_path = paths
+    # folder_path[-1]="_".join(inf_type) # 이미지 폴더 하위에 annotation 저장  ex) BBOX_KEYP
+    folder_path = paths[:-1]  # 파일 이름 제외
+    folder_path[-1]="_".join(inf_type) # 이미지 폴더와 동일 Level로 결과 폴더 생성    
     # folder_path[-1]='inf_result' # 이미지 폴더와 동일 Level로 결과 폴더 생성    
 
     now = datetime.now()
@@ -343,6 +342,7 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
     else:        # is_video==False -> image
         img = mmcv.imread(fpath)    
         mmdet_results = inference_detector(det_model, fpath)
+        print("mmdet_results >>>>>>>>> ",mmdet_results)
         det_results = process_mmdet_results(mmdet_results, 1)  # 20 for cow
         img_id = len(coco_obj['images'])+1
         ann_image = create_image(seq=img_id, width=img.shape[1], height=img.shape[0], file_name=fname)
