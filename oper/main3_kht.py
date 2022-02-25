@@ -63,8 +63,9 @@ class AnnoEventHandler(FileSystemEventHandler):
         super().on_moved(event)
         what = 'directory' if event.is_directory else 'file'
         self.logger.info("Moved %s: from %s to %s", what, event.src_path, event.dest_path)
+        self.logger.info("suffix :%s", pathlib.Path(event.dest_path).suffix)
 
-        if what is 'directory':
+        if what == 'directory':
             return
         if pathlib.Path(event.dest_path).suffix in image_suffix:
             self.logger.info("image file detected : moved %s: %s", what, event.dest_path)
@@ -85,7 +86,7 @@ class AnnoEventHandler(FileSystemEventHandler):
         super().on_modified(event)
         what = 'directory' if event.is_directory else 'file'
 
-        if what is 'directory':
+        if what == 'directory':
             return
         if pathlib.Path(event.src_path).suffix != '.mp4':
             return
