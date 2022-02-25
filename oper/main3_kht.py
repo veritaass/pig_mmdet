@@ -340,10 +340,14 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
         logger.info(f"Done XML.")
 
     else:        # is_video==False -> image
+    ### 이미지 로직으로 위에 동영상 부분 수정 필요함
         img = mmcv.imread(fpath)    
         mmdet_results = inference_detector(det_model, fpath)
-        print("mmdet_results >>>>>>>>> ",mmdet_results)
-        det_results = process_mmdet_results(mmdet_results, 1)  # 20 for cow
+        # print("mmdet_results >>>>>>>>> ",mmdet_results)
+        # det_results = process_mmdet_results(mmdet_results, 1)  # just pig
+        all_det_results = process_mmdet_results(mmdet_results, 1)  # just pig        
+        det_results = all_det_results[np.where(all_det_results[:,4] > 0.6)] # filtering upper thr_scr 
+
         img_id = len(coco_obj['images'])+1
         ann_image = create_image(seq=img_id, width=img.shape[1], height=img.shape[0], file_name=fname)
         coco_obj['images'].append(ann_image)
