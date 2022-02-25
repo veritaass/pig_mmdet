@@ -125,7 +125,7 @@ class AnnoEventHandler(FileSystemEventHandler):
         self.logger.info("Deleted %s: %s", what, event.src_path)
 
 
-def process_mmdet_results(mmdet_results, cat_id=1):
+def process_mmdet_results(mmdet_results, cat_id=1, score_thr=0.6):
     """Process mmdet results, and return a list of bboxes.
     :param mmdet_results:
     :param cat_id: category id (default: 1 for human)
@@ -136,7 +136,9 @@ def process_mmdet_results(mmdet_results, cat_id=1):
     else:
         det_results = mmdet_results
 
-    bboxes = det_results[cat_id - 1]
+    # bboxes = det_results[cat_id - 1]
+    bboxes = np.array(det_results[cat_id - 1])
+    bboxes = bboxes[np.where(bboxes[:,4] > score_thr)]
 
     person_results = []
     for bbox in bboxes:
@@ -344,9 +346,7 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
         img = mmcv.imread(fpath)    
         mmdet_results = inference_detector(det_model, fpath)
         # print("mmdet_results >>>>>>>>> ",mmdet_results)
-        # det_results = process_mmdet_results(mmdet_results, 1)  # just pig
-        all_det_results = process_mmdet_results(mmdet_results, 1)  # just pig        
-        det_results = all_det_results[np.where(all_det_results[:,4] > 0.6)] # filtering upper thr_scr 
+        det_results = process_mmdet_results(mmdet_results, 1)  # just pig
 
         img_id = len(coco_obj['images'])+1
         ann_image = create_image(seq=img_id, width=img.shape[1], height=img.shape[0], file_name=fname)
