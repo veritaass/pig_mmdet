@@ -1,6 +1,5 @@
 # support keypoint as cvat.
 
-
 import time
 import logging
 from typing import Dict
@@ -29,6 +28,10 @@ import shutil
 2. output select option (cvat, coco, .. extra ..)
 3. 
 """
+
+# class
+det_classes = None
+
 # target suffix
 image_suffix = ['.jpg','.jpeg','.png']
 video_suffix = ['.mp4','.avi','.wmv']
@@ -163,7 +166,7 @@ def create_coco_anno_obj():
     coco['categories'] = [
         {
             "id": 1,
-            "name": "Cow",
+            "name": "Pig",
             "supercategory": "Animals",
             "color": "#1bbe19",
             "metadata": {},
@@ -485,7 +488,9 @@ def create_cvat_xml(cocoset, send_path):
 
     xml_output = xml_root.toprettyxml(indent ="\t") 
     lst_anno = cocoset["annotations"]
-    label="Cow"
+    # label="Cow"
+    label = "Pig"
+    # label = det_class
     occluded="0"
 
     num_keypoint = 20
@@ -558,12 +563,16 @@ def main():
                         datefmt='%Y-%m-%d %H:%M:%S')
     logger = logging.root
     path = args.recv_dir
+    
     logger.info("Detection initlizing ...")
     det_model = init_detector(
         args.det_config, args.det_checkpoint, device='cuda:5')
-    logger.info("PoseModel initlizing ...")
+    # global det_class = det_model.CLASSES
+    
+    logger.info("PoseModel initlizing ...")    
     pose_model = init_pose_model(
         args.pose_config, args.pose_checkpoint, device='cuda:6')
+    
     # logger.info("Segmentation initlizing ...")
     # seg_model = init_segmentor(
     #     args.seg_config, args.seg_checkpoint, device='cuda:7')
