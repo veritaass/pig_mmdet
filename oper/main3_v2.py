@@ -22,6 +22,18 @@ from xml.dom import minidom
 from datetime import datetime
 import shutil
 
+""" upgrade plan
+1. param
+    - [req] watch_path : watching path as string / requirement
+    - [opt] out_path : output path as string / default '../[inf_type]/[yyyymmdd]/ ...'
+    - [opt] inf_type : inference types as string ('/' separated) / default 'bbox'
+    - [opt] classes : output Classes index as string ('/' separated) / default '0'
+    - [opt] score_thr : score threshold as float / default 0.6
+2. get model and checkpoint on file (json)
+"""
+### param 정의 및 파싱하는 거 부터 시작
+
+
 # class
 det_classes = None
 
@@ -50,19 +62,19 @@ class AnnoEventHandler(FileSystemEventHandler):
     """Logs all the events captured."""
     def __init__(self, logger=None):
         super().__init__()
-
         self.logger = logger or logging.root
         self.last_modified = None
         self.last_size = -1
 
     def on_moved(self, event):
         super().on_moved(event)
-        what = 'directory' if event.is_directory else 'file'
-        self.logger.info("Moved %s: from %s to %s", what, event.src_path, event.dest_path)
-        self.logger.info("suffix :%s", pathlib.Path(event.dest_path).suffix)
+        what = 'directory' if event.is_directory else 'file'        
 
         if what == 'directory':
             return
+        if event.dest_path == event.src_path:
+            return
+        
         if pathlib.Path(event.dest_path).suffix in image_suffix:
             self.logger.info("image file detected : moved %s: %s", what, event.dest_path)
             process_inference(event.dest_path, False)
@@ -70,55 +82,166 @@ class AnnoEventHandler(FileSystemEventHandler):
         if pathlib.Path(event.dest_path).suffix in video_suffix:
             self.logger.info("video file detected : moved %s: %s", what, event.dest_path)
             process_inference(event.dest_path, True)
-            # process_video(event.dest_path)
-            return
-        if event.dest_path == event.src_path:
-            return
-
-        # only .mp4 file
-        
+            return        
 
     def on_modified(self, event):
         super().on_modified(event)
         what = 'directory' if event.is_directory else 'file'
 
         if what == 'directory':
-            return
-        if pathlib.Path(event.src_path).suffix != '.mp4':
-            return
+            return        
         if self.last_modified == event.src_path and self.last_size == os.path.getsize(event.src_path):
             return
 
-        # only .mp4 file
-        self.logger.info("mp4 detected modified %s: %s", what, event.src_path)
-        size_past = os.path.getsize(event.src_path)
-
-        while True:
-            time.sleep(1)
-            size_now = os.path.getsize(event.src_path)
-            if size_now == size_past:
-                self.logger.debug("file has copied completely now size: %s", size_now)
-                self.last_modified = event.src_path
-                self.last_size = size_now
-                process_video(event.src_path)
-
-                break
-                # TODO: why sleep is not working here ?
-            else:
-                size_past = os.path.getsize(event.src_path)
-                self.logger.debug("file copying size: %s", size_past)
+        if pathlib.Path(event.src_path).suffix in image_suffix:
+            self.logger.info("image file detected : moved %s: %s", what, event.src_path)
+            process_inference(event.src_path, False)
+            return
+        if pathlib.Path(event.src_path).suffix in video_suffix:
+            self.logger.info("video file detected : moved %s: %s", what, event.src_path)
+            process_inference(event.src_path, True)
+            return
                 
     def on_created(self, event):
         super().on_created(event)
-
         what = 'directory' if event.is_directory == True else 'file'
         self.logger.info("Created %s: %s", what, event.src_path)
 
     def on_deleted(self, event):
         super().on_deleted(event)
-
         what = 'directory' if event.is_directory == True else 'file'
         self.logger.info("Deleted %s: %s", what, event.src_path)
+
+#######################
+### kht add - start ###
+#######################
+def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
+    ### temp
+    inf_type = ['BBOX']
+    # inf_type = ['BBOX', 'KEYP']
+
+    logger = logging.root
+    BBOX = 'Bounding-box'
+    KEYP = 'Key-point'
+    POLY = 'Polygon'
+
+    paths = fpath.split('/')
+    fname = paths[-1]
+
+    #######################################
+    ### create output file path - start ###
+    ### {imagePath}/BBOX_KEPY/20220224/14/20/annotations/coco-annotation.json 
+    ### {imagePath}/BBOX_KEPY/20220224/14/20/images/img00001.jpg 
+    #######################################    
+    folder_path = paths[:-1]  # 파일 이름 제외
+    folder_path[-1]="_".join(inf_type) # 이미지 폴더와 동일 Level로 결과 폴더 생성    
+
+    now = datetime.now()
+    now_ymd, now_h, now_m = now.strftime('%Y%m%d'), now.strftime('%H'), int(now.strftime('%M'))
+    div_min = div_folder_cycle_min     # 파일 폴더 분류 주기(분)
+    adj_min = format(int(now_m/div_min) * div_min, '02')
+    
+    folder_path += [now_ymd, now_h, adj_min]
+    send_path = '/'.join(folder_path)
+    pathlib.Path(send_path+"/annotations").mkdir(parents=True, exist_ok=True)
+    pathlib.Path(send_path+"/images").mkdir(parents=True, exist_ok=True)
+    #####################################
+    ### create output file path - end ###
+    #####################################
+
+    global det_model, pose_model, seg_model
+    coco_obj = None
+    if os.path.isfile(f'{send_path}/annotations/coco-annotation.json'):
+    # print('file exist..')
+        with open(f'{send_path}/annotations/coco-annotation.json') as json_file:
+            coco_obj = json.load(json_file)
+    else:
+        coco_obj = create_coco_anno_obj()
+        
+    if is_video:
+        video = mmcv.VideoReader(fpath)
+        logger.info(f'fps: {video._fps}, frame_cnt: {video._frame_cnt}')
+
+        tot_frames = 0        
+        for frame in video:
+            tot_frames += 1
+            frame_name = f'frame-{tot_frames:05d}.jpg'
+            if tot_frames % (video._fps / 2) == 0:
+                cv2.imwrite(os.path.join(send_path, frame_name), frame)
+                ann_image = create_image(
+                    seq=tot_frames, width=video._width, height=video._height, file_name=frame_name)
+                coco_obj['images'].append(ann_image)
+                
+                # BBOX
+                mmdet_results = inference_detector(det_model, frame)
+                det_results = process_mmdet_results(mmdet_results, 1)
+
+                if inf_type == BBOX:
+                    coco_obj = append_bbox_annotation(coco_obj, tot_frames, det_results)
+
+                elif inf_type == KEYP:
+                    pose_results, returned_outputs = inference_top_down_pose_model(
+                        pose_model, frame, det_results, bbox_thr=0.4,
+                        format='xyxy', return_heatmap=None, outputs=None,
+                        dataset='AnimalPoseDataset'
+                    )
+
+                    vis_pose_result(
+                        pose_model, frame, pose_results,
+                        kpt_score_thr=0.3, radius=1, thickness=1, show=False,
+                        dataset='AnimalPoseDataset',
+                        out_file=os.path.join(send_path, 'images', f'pose-{tot_frames:05d}.jpg')
+                    )
+
+                    coco_obj = append_keyp_annotation(coco_obj, tot_frames, pose_results=pose_results)
+                    ### for CVAT : KeyPoint export to CVAT Foramt
+                    create_cvat_xml(coco_obj, send_path)
+                    logger.info(f"Done KeyPoint to CVAT Format.")
+            
+        with open(os.path.join(send_path, 'annotations', f"coco-annotation.json"), 'w', encoding='utf8') as json_file:
+            json.dump(coco_obj, json_file, cls=NumpyEncoder, ensure_ascii=False)
+
+        logger.info(f"Done JSON : {send_path}")
+
+    else:   # is_video==False -> image
+        img = mmcv.imread(fpath)    
+        mmdet_results = inference_detector(det_model, fpath)
+        det_results = process_mmdet_results(mmdet_results, 1)  # 1 : pig
+
+        img_id = len(coco_obj['images'])+1
+        ann_image = create_image(seq=img_id, width=img.shape[1], height=img.shape[0], file_name=fname)
+        coco_obj['images'].append(ann_image)
+        
+        if 'BBOX' in inf_type :
+            coco_obj = append_bbox_annotation(coco_obj, img_id, det_results)
+        
+        if 'KEYP' in inf_type:
+            pose_results, returned_outputs = inference_top_down_pose_model(
+                pose_model, fpath, det_results, bbox_thr=0.4,
+                format='xyxy', return_heatmap=None, outputs=None,
+                dataset='AnimalPoseDataset'
+            )
+            vis_pose_result(
+                pose_model, fpath, pose_results, kpt_score_thr=0.3,
+                radius=1, thickness=1, show=False, out_file=None,
+                dataset='AnimalPoseDataset'
+            )
+
+            coco_obj = append_keyp_annotation(coco_obj, img_id, pose_results=pose_results)
+            create_cvat_xml(coco_obj, send_path)
+            logger.info(f"Done KeyPoint to CVAT Format.")
+            
+        with open(os.path.join(send_path,'annotations', f"coco-annotation.json"), 'w', encoding='utf8') as json_file:
+            json.dump(coco_obj, json_file, cls=NumpyEncoder, ensure_ascii=False)
+
+        shutil.move(fpath, os.path.join(send_path, 'images', fname)) ### Inference 완료된 이미지 파일 inf_result 로 이동
+        # shutil.copy(fpath, os.path.join(send_path, 'images', fname)) ### Inference 완료된 이미지 파일 inf_result 로 복사
+        logger.info(f"image inference Done : {send_path}")
+
+#####################    
+### kht add - end ###
+#####################    
+
 
 
 def process_mmdet_results(mmdet_results, cat_id=1, score_thr=0.6):
@@ -225,244 +348,6 @@ def append_keyp_annotation(coco_obj, image_id, pose_results):
 
     return coco_obj
 
-
-#######################
-### kht add - start ###
-#######################
-
-def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
-    ### temp
-    inf_type = ['BBOX']
-    # inf_type = ['BBOX', 'KEYP']
-    ### temp
-    # if not inf_type :
-    #     return
-
-    logger = logging.root
-    BBOX = 'Bounding-box'
-    KEYP = 'Key-point'
-    POLY = 'Polygon'
-
-    paths = fpath.split('/')
-    fname = paths[-1]
-    # inf_type = paths[-2]
-    # location = paths[-3]  
-
-    #######################################
-    ### create output file path - start ###
-    ### {imagePath}/BBOX_KEPY/20220224/14/20/annotations/coco-annotation.json 
-    ### {imagePath}/BBOX_KEPY/20220224/14/20/images/img00001.jpg 
-    #######################################
-    # folder_path = paths
-    # folder_path[-1]="_".join(inf_type) # 이미지 폴더 하위에 annotation 저장  ex) BBOX_KEYP
-    folder_path = paths[:-1]  # 파일 이름 제외
-    folder_path[-1]="_".join(inf_type) # 이미지 폴더와 동일 Level로 결과 폴더 생성    
-    # folder_path[-1]='inf_result' # 이미지 폴더와 동일 Level로 결과 폴더 생성    
-
-    now = datetime.now()
-    now_ymd, now_h, now_m = now.strftime('%Y%m%d'), now.strftime('%H'), int(now.strftime('%M'))
-    # now_ymd = now.strftime("%Y%m%d")
-    # now_h = now.strftime("%H")
-    # now_m = int(now.strftime("%M"))    
-    div_min = div_folder_cycle_min     # 파일 폴더 분류 주기(분)
-    adj_min = format(int(now_m/div_min) * div_min, '02')
-
-    # folder_path.append(now_ymd)
-    # folder_path.append(now_h)
-    # folder_path.append(adj_min)
-    folder_path += [now_ymd, now_h, adj_min]
-    send_path = '/'.join(folder_path)
-    # pathlib.Path(send_path).mkdir(parents=True, exist_ok=True)
-    pathlib.Path(send_path+"/annotations").mkdir(parents=True, exist_ok=True)
-    pathlib.Path(send_path+"/images").mkdir(parents=True, exist_ok=True)
-    ### create output file path - end ###
-
-    # if inf_type not in [BBOX, KEYP, POLY]:
-    #     logger.info("Not a type to process.")
-    #     return
-    
-    global det_model, pose_model, seg_model
-    coco_obj = None
-    if os.path.isfile(f'{send_path}/annotations/coco-annotation.json'):
-    # print('file exist..')
-        with open(f'{send_path}/annotations/coco-annotation.json') as json_file:
-            coco_obj = json.load(json_file)
-    else:
-        coco_obj = create_coco_anno_obj()
-    
-    ### image video 분기...
-    if is_video:
-        video = mmcv.VideoReader(fpath)
-        logger.info(f'fps: {video._fps}, frame_cnt: {video._frame_cnt}')
-
-        tot_frames = 0        
-        for frame in video:
-            tot_frames += 1
-            frame_name = f'frame-{tot_frames:05d}.jpg'
-            if tot_frames % (video._fps / 2) == 0:
-                cv2.imwrite(os.path.join(send_path, frame_name), frame)
-                ann_image = create_image(
-                    seq=tot_frames, width=video._width, height=video._height, file_name=frame_name)
-                coco_obj['images'].append(ann_image)
-                
-                # BBOX
-                mmdet_results = inference_detector(det_model, frame)
-                det_results = process_mmdet_results(
-                    mmdet_results, 1)  # 20 for cow
-
-                # logger.info(f'length of detection results : {len(det_results)}, {det_results}')
-                if inf_type == BBOX:
-                    coco_obj = append_bbox_annotation(coco_obj, tot_frames, det_results)
-
-                elif inf_type == KEYP:
-                    pose_results, returned_outputs = inference_top_down_pose_model(
-                        pose_model, frame, det_results, bbox_thr=0.4,
-                        format='xyxy', return_heatmap=None, outputs=None,
-                        dataset='AnimalPoseDataset')  # bkseo temp.,
-
-                    vis_pose_result(
-                        pose_model, frame, pose_results,
-                        kpt_score_thr=0.3, radius=1, thickness=1, show=False,
-                        dataset='AnimalPoseDataset',
-                        out_file=os.path.join(send_path, f'pose-{tot_frames:05d}.jpg'))
-
-                    coco_obj = append_keyp_annotation(coco_obj, tot_frames, pose_results=pose_results)
-            
-        with open(os.path.join(send_path, f"coco-annotation.json"), 'w', encoding='utf8') as json_file:
-            json.dump(coco_obj, json_file, cls=NumpyEncoder, ensure_ascii=False)
-
-        logger.info(f"Done JSON : {send_path}")
-        
-        # Keypoint writing CVAT xml
-        create_cvat_xml(coco_obj, send_path)
-        logger.info(f"Done XML.")
-
-    else:        # is_video==False -> image
-    ### 이미지 로직으로 위에 동영상 부분 수정 필요함
-        img = mmcv.imread(fpath)    
-        mmdet_results = inference_detector(det_model, fpath)
-        # print("mmdet_results >>>>>>>>> ",mmdet_results)
-        det_results = process_mmdet_results(mmdet_results, 1)  # just pig
-
-        img_id = len(coco_obj['images'])+1
-        ann_image = create_image(seq=img_id, width=img.shape[1], height=img.shape[0], file_name=fname)
-        coco_obj['images'].append(ann_image)
-
-        # logger.info(f'length of detection results : {len(det_results)}, {det_results}')
-        # print(inf_type == BBOX)
-        # if inf_type == BBOX:
-        if 'BBOX' in inf_type :
-            coco_obj = append_bbox_annotation(coco_obj, img_id, det_results)
-        # if inf_type == KEYP:
-        if 'KEYP' in inf_type:
-            pose_results, returned_outputs = inference_top_down_pose_model(
-                pose_model, fpath, det_results, bbox_thr=0.4,
-                format='xyxy', return_heatmap=None, outputs=None,
-                dataset='AnimalPoseDataset'  # bkseo temp.,
-                )
-            vis_pose_result(
-                pose_model, fpath, pose_results, kpt_score_thr=0.3,
-                radius=1, thickness=1, show=False, out_file=None,
-                dataset='AnimalPoseDataset'
-                )
-                # out_file=os.path.join(paths, fname))
-
-            coco_obj = append_keyp_annotation(coco_obj, img_id, pose_results=pose_results)
-            
-        with open(os.path.join(send_path,'annotations', f"coco-annotation.json"), 'w', encoding='utf8') as json_file:
-            json.dump(coco_obj, json_file, cls=NumpyEncoder, ensure_ascii=False)
-
-        shutil.move(fpath, os.path.join(send_path, 'images', fname)) ### Inference 완료된 이미지 파일 inf_result 로 이동
-        # print(f"fpath >> {fpath}")
-        # print(f"send_path >> {os.path.join(send_path, fname)}")
-        logger.info(f"image inference Done : {send_path}")
-
-#####################    
-### kht add - end ###
-#####################    
-
-# path => location/infer-type/filename.mp4
-def process_video(fpath):
-    logger = logging.root
-    BBOX = 'Bounding-box'
-    KEYP = 'Key-point'
-    POLY = 'Polygon'
-
-    paths = fpath.split('/')
-    fname = paths[-1]
-    inf_type = paths[-2]
-    location = paths[-3]
-
-    if inf_type not in [BBOX, KEYP, POLY]:
-        logger.info("Not a type to process.")
-        return
-
-    global det_model, pose_model, seg_model
-
-    video = mmcv.VideoReader(fpath)
-    logger.info(f'fps: {video._fps}, frame_cnt: {video._frame_cnt}')
-
-    paths[-4] = 'send'
-    send_path = '/'.join(paths)
-    pathlib.Path(send_path).mkdir(parents=True, exist_ok=True)
-
-    tot_frames = 0
-    coco_obj = create_coco_anno_obj()
-    
-    for frame in video:
-        tot_frames += 1
-        # if tot_frames == 50:
-        #     break
-        frame_name = f'frame-{tot_frames:05d}.jpg'
-        if tot_frames % (video._fps / 2) == 0:
-            cv2.imwrite(os.path.join(send_path, frame_name), frame)
-            ann_image = create_image(
-                seq=tot_frames, width=video._width, height=video._height, file_name=frame_name)
-            coco_obj['images'].append(ann_image)
-            
-            # BBOX
-            mmdet_results = inference_detector(det_model, frame)
-            det_results = process_mmdet_results(
-                mmdet_results, 1)  # 20 for cow
-
-            # logger.info(f'length of detection results : {len(det_results)}, {det_results}')
-            if inf_type == BBOX:
-                coco_obj = append_bbox_annotation(coco_obj, tot_frames, det_results)
-
-            elif inf_type == KEYP:
-                pose_results, returned_outputs = inference_top_down_pose_model(
-                    pose_model,
-                    frame,
-                    det_results,
-                    bbox_thr=0.4,
-                    format='xyxy',
-                    dataset='AnimalPoseDataset',  # bkseo temp.,
-                    return_heatmap=None,
-                    outputs=None)
-
-                vis_pose_result(
-                    pose_model,
-                    frame,
-                    pose_results,
-                    dataset='AnimalPoseDataset',
-                    kpt_score_thr=0.3,
-                    radius=1,
-                    thickness=1,
-                    show=False,
-                    out_file=os.path.join(send_path, f'pose-{tot_frames:05d}.jpg'))
-
-                coco_obj = append_keyp_annotation(coco_obj, tot_frames, pose_results=pose_results)
-           
-    with open(os.path.join(send_path, f"coco-annotation.json"), 'w', encoding='utf8') as json_file:
-        json.dump(coco_obj, json_file, cls=NumpyEncoder, ensure_ascii=False)
-
-    logger.info(f"Done JSON : {send_path}")
-    
-    # Keypoint writing CVAT xml
-    create_cvat_xml(coco_obj, send_path)
-    logger.info(f"Done XML.")
-
-
 def create_cvat_xml(cocoset, send_path):
 
     xml_doc = minidom.Document()
@@ -481,7 +366,6 @@ def create_cvat_xml(cocoset, send_path):
 
     xml_output = xml_root.toprettyxml(indent ="\t") 
     lst_anno = cocoset["annotations"]
-    # label="Cow"
     label = "Pig"
     # label = det_class
     occluded="0"
@@ -508,26 +392,19 @@ def create_cvat_xml(cocoset, send_path):
     # with open(os.path.join(send_path, f"cvat-keypoint.xml"), 'w', encoding='utf8') as f:
     with open(os.path.join(send_path, f"cvat-keypoint.xml"), 'w') as f:
         f.write(xml_root.toxml())
-
     pass
 
-# def get_model_files(zoo_id):
-#     return zoo[zoo_id]['config'], zoo[zoo_id]['checkpoint']
 
 def main():
     global det_model, pose_model, seg_model
 
     parser = ArgumentParser()
     parser.add_argument('--video-path', type=str, help='Video path')
-    parser.add_argument(
-        '--out-video-root', type=str, default='.', help='Output directory')
-    parser.add_argument(
-        '--show', action='store_true', default=False, help='whether to show visualizations.')
+    parser.add_argument('--out-video-root', type=str, default='.', help='Output directory')
+    parser.add_argument('--show', action='store_true', default=False, help='whether to show visualizations.')
 
-    parser.add_argument(
-        '--fps', type=int, default=2, help='fps. should be int.')
-    parser.add_argument(
-        'recv_dir', help='Specify directory to monitor')
+    parser.add_argument('--fps', type=int, default=2, help='fps. should be int.')
+    parser.add_argument('watch_path', help='Specify directory to monitor')
 
     parser.add_argument('--det-config',
                         default='../configs/mask_rcnn/mask_rcnn_r101_fpn_mstrain-poly_3x_coco.py',
@@ -555,7 +432,7 @@ def main():
                         format='%(asctime)s - %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S')
     logger = logging.root
-    path = args.recv_dir
+    path = args.watch_path
     
     logger.info("Detection initlizing ...")
     det_model = init_detector(
