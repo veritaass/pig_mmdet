@@ -26,13 +26,12 @@ import shutil
 1. param
     - [req] watch_path : watching path as string / requirement
     - [opt] out_path : output path as string / default '../[inf_type]/[yyyymmdd]/ ...'
-    - [opt] inf_type : inference types as string ('/' separated) / default 'bbox'
-    - [opt] classes : output Classes index as string ('/' separated) / default '0'
+    - [opt] inf_type : inference types as string (csv) / default 'bbox'
+    - [opt] classes : output Classes index as string (csv) / default '0'
     - [opt] score_thr : score threshold as float / default 0.6
 2. get model and checkpoint on file (json)
 """
 ### param 정의 및 파싱하는 거 부터 시작
-
 
 # class
 det_classes = None
@@ -42,9 +41,8 @@ image_suffix = ['.jpg','.jpeg','.png']
 video_suffix = ['.mp4','.avi','.wmv']
 
 # model
-det_model = None
-pose_model = None
-seg_model = None
+det_model, pose_model, seg_model = None, None, None
+out_path, inf_type, classes, score_thr = None, None, None, None
 
 class NumpyEncoder(json.JSONEncoder):
     """ Special json encoder for numpy types """
@@ -116,8 +114,10 @@ class AnnoEventHandler(FileSystemEventHandler):
 ### kht add - start ###
 #######################
 def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
+    global det_model, pose_model, seg_model
+    global out_path, inf_type, classes, score_thr
     ### temp
-    inf_type = ['BBOX']
+    # inf_type = ['BBOX']
     # inf_type = ['BBOX', 'KEYP']
 
     logger = logging.root
@@ -134,6 +134,8 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
     ### {imagePath}/BBOX_KEPY/20220224/14/20/images/img00001.jpg 
     #######################################    
     folder_path = paths[:-1]  # 파일 이름 제외
+    if out_path is not None:
+        folder_path = out_path
     folder_path[-1]="_".join(inf_type) # 이미지 폴더와 동일 Level로 결과 폴더 생성    
 
     now = datetime.now()
@@ -148,8 +150,7 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
     #####################################
     ### create output file path - end ###
     #####################################
-
-    global det_model, pose_model, seg_model
+    
     coco_obj = None
     if os.path.isfile(f'{send_path}/annotations/coco-annotation.json'):
     # print('file exist..')
@@ -162,7 +163,7 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
         video = mmcv.VideoReader(fpath)
         logger.info(f'fps: {video._fps}, frame_cnt: {video._frame_cnt}')
 
-        tot_frames = 0        
+        tot_frames = 0
         for frame in video:
             tot_frames += 1
             frame_name = f'frame-{tot_frames:05d}.jpg'
@@ -174,12 +175,12 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
                 
                 # BBOX
                 mmdet_results = inference_detector(det_model, frame)
-                det_results = process_mmdet_results(mmdet_results, 1)
+                det_results = process_mmdet_results(mmdet_results, 1, score_thr)
 
-                if inf_type == BBOX:
+                if 'BBOX' in inf_type :
                     coco_obj = append_bbox_annotation(coco_obj, tot_frames, det_results)
 
-                elif inf_type == KEYP:
+                if 'KEYP' in inf_type:
                     pose_results, returned_outputs = inference_top_down_pose_model(
                         pose_model, frame, det_results, bbox_thr=0.4,
                         format='xyxy', return_heatmap=None, outputs=None,
@@ -206,9 +207,9 @@ def process_inference(fpath, is_video=False, div_folder_cycle_min=5):
     else:   # is_video==False -> image
         img = mmcv.imread(fpath)    
         mmdet_results = inference_detector(det_model, fpath)
-        det_results = process_mmdet_results(mmdet_results, 1)  # 1 : pig
+        det_results = process_mmdet_results(mmdet_results, 1, score_thr)  # 1 : pig
 
-        img_id = len(coco_obj['images'])+1
+        img_id = len(coco_obj['images']) + 1
         ann_image = create_image(seq=img_id, width=img.shape[1], height=img.shape[0], file_name=fname)
         coco_obj['images'].append(ann_image)
         
@@ -308,6 +309,7 @@ def create_annotation():
         "keypoints": [ 831, 464, 1, 1246, 538, 1 ], # 3 pair = 1 keypoint
         "num_keypoints": 20
     }
+
 def append_bbox_annotation(coco_obj, image_id, bboxes):
     for bbox in bboxes:
         annotation = create_annotation()
@@ -394,17 +396,27 @@ def create_cvat_xml(cocoset, send_path):
         f.write(xml_root.toxml())
     pass
 
+'''
+1. param
+    - [req] watch_path : watching path as string / requirement
+    - [opt] out_path : output path as string / default '../[inf_type]/[yyyymmdd]/ ...'
+    - [opt] inf_type : inference types as string ('/' separated) / default 'bbox'
+    - [opt] classes : output Classes index as string ('/' separated) / default '0'
+    - [opt] score_thr : score threshold as float / default 0.6
+'''
 
 def main():
     global det_model, pose_model, seg_model
-
+    global out_path, inf_type, classes, score_thr
     parser = ArgumentParser()
-    parser.add_argument('--video-path', type=str, help='Video path')
-    parser.add_argument('--out-video-root', type=str, default='.', help='Output directory')
-    parser.add_argument('--show', action='store_true', default=False, help='whether to show visualizations.')
-
-    parser.add_argument('--fps', type=int, default=2, help='fps. should be int.')
-    parser.add_argument('watch_path', help='Specify directory to monitor')
+    # parser.add_argument('--video-path', type=str, help='Video path')
+    # parser.add_argument('--show', action='store_true', default=False, help='whether to show visualizations.')
+    parser.add_argument('watch-path', help='Specify directory to monitor')
+    parser.add_argument('-o', '--out-path', type=str, default=None, help='Output directory')
+    parser.add_argument('-i', '--inf-type', type=str, default='bbox', help='inference type')
+    parser.add_argument('-c', '--classes', type=str, default='1', help='class index for detect in model')
+    parser.add_argument('-s', '--score-thr', type=float, default=0.6, help='fps. should be int.')
+    parser.add_argument('-f', '--fps', type=int, default=2, help='fps. should be int.')
 
     parser.add_argument('--det-config',
                         default='../configs/mask_rcnn/mask_rcnn_r101_fpn_mstrain-poly_3x_coco.py',
@@ -420,19 +432,16 @@ def main():
                         default='https://download.openmmlab.com/mmpose/animal/hrnet/hrnet_w48_animalpose_256x256-34644726_20210426.pth',
                         help='Checkpoint file for pose')
 
-    # parser.add_argument('--seg_config', default='../mmsegmentation/configs/pspnet/pspnet_r101-d8_512x512_40k_voc12aug.py',
-    #                     help='Config file for segmentation')
-    # parser.add_argument('--seg_checkpoint',
-    #                     default='../mmsegmentation/checkpoints/pspnet_r101-d8_512x512_40k_voc12aug_20200613_161222-bc933b18.pth',
-    #                     help='Checkpoint file for segmentation')
-
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s - %(message)s',
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S')
     logger = logging.root
     path = args.watch_path
+    out_path = args.out_path
+    inf_type = str(args.inf_type).split(',')
+    classes = str(args.classes).split(',')
+    score_thr = float(args.score_thr)
     
     logger.info("Detection initlizing ...")
     det_model = init_detector(
@@ -443,9 +452,6 @@ def main():
     pose_model = init_pose_model(
         args.pose_config, args.pose_checkpoint, device='cuda:6')
     
-    # logger.info("Segmentation initlizing ...")
-    # seg_model = init_segmentor(
-    #     args.seg_config, args.seg_checkpoint, device='cuda:7')
     event_handler = AnnoEventHandler()
     observer = Observer()
     observer.schedule(event_handler, path, recursive=True)
